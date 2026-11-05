@@ -27,6 +27,10 @@ p { margin: 0 0 0.85em; text-indent: 0; text-align: left; }
 p.salmo { font-variant: small-caps; font-weight: bold; margin: 1.3em 0 0.4em;
           page-break-after: avoid; color: #a01010; }
 p.ant { margin-left: 0; }
+p.ref { font-style: italic; margin: 0.2em 0 1em; }
+p.nota { font-style: italic; font-size: 0.9em; color: #a01010; }
+p.titulo { font-weight: bold; text-align: center; margin: 0.5em 0 0.3em; }
+.salterio { font-size: 0.9em; margin-top: -1em; }
 .r { color: #a01010; font-weight: bold; }
 .cabecera { text-align: center; font-style: italic; margin-bottom: 1.5em; }
 .portada { text-align: center; }
@@ -130,7 +134,7 @@ def portada_png(d: dt.date, celebracion: str, pie: str) -> bytes:
 # --------------------------------------------------------------------------
 
 def construir(d: dt.date, celebracion: str, secciones: list[Seccion],
-              avisos: list[str], destino: Path) -> Path:
+              avisos: list[str], destino: Path, salterio: str = "") -> Path:
     ident = uuid.uuid5(uuid.NAMESPACE_URL, f"liturgia-kindle:{d.isoformat()}")
     titulo_libro = f"Liturgia · {fecha_larga(d).capitalize()}"
     modificado = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -158,6 +162,7 @@ def construir(d: dt.date, celebracion: str, secciones: list[Seccion],
 <p class="cruz">†</p>
 <h1>{escape(dia)}</h1>
 <p class="celebracion">{escape(celebracion)}</p>
+{f'<p class="salterio">{escape(salterio)}</p>' if salterio else ''}
 </div>
 {aviso_html}
 <div class="indice">
@@ -232,7 +237,7 @@ def construir(d: dt.date, celebracion: str, secciones: list[Seccion],
 <dc:creator>Liturgia de las Horas</dc:creator>
 <dc:publisher>Liturgia diaria</dc:publisher>
 <dc:date>{d.isoformat()}</dc:date>
-<dc:description>{escape(celebracion)}</dc:description>
+{f'<dc:description>{escape(celebracion)}</dc:description>' if celebracion else ''}
 <meta property="dcterms:modified">{modificado}</meta>
 <meta name="cover" content="portada-img"/>
 </metadata>

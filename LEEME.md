@@ -4,8 +4,8 @@ Cada madrugada, este repositorio prepara un libro (EPUB) con **Laudes, Sexta, V�
 
 - **Horas:** [Salmodiando](https://salmodiando.es), con los textos de la Liturgia de las Horas de España. Para Sexta usa el salterio del día, que es lo indicado cuando se reza una sola hora menor.
 - **Evangelio:** [Oración y Liturgia](https://oracionyliturgia.archimadrid.org), de la Archidiócesis de Madrid (leccionario de España).
-- **Horario:** hacia las 04:17 (invierno) o las 05:17 (verano), hora de España. Si ese envío falla, hay un segundo intento una hora y media después. Si ya se envió, el segundo intento no hace nada, así que nunca recibirás dos copias.
-- **Comprobaciones:** antes de meter algo en el libro se comprueba que la página es de la fecha correcta y que la hora tiene todas sus partes. Si algo falla, el libro llega igualmente con lo que sí se pudo preparar, con un aviso en la primera página, y GitHub te manda un correo.
+- **Horario:** hacia las 04:17 (invierno) o las 05:17 (verano), hora de España. Si algo falla, hay dos reintentos: a las 05:47 y a las 07:17 (invierno; una hora más en verano). Si ya se envió, los reintentos no hacen nada, así que nunca recibirás dos copias.
+- **Comprobaciones:** antes de meter algo en el libro se comprueba que la página es del día correcto y que la hora tiene todas sus partes. Si en el último intento sigue fallando alguna parte, el libro llega igualmente con lo que sí se pudo preparar, con un aviso en la primera página, y GitHub te manda un correo.
 
 ---
 
@@ -47,7 +47,7 @@ Ya está. Desde ahora llegará solo cada día.
 
 ## Uso diario y opciones
 
-- **Otro día a mano** (por ejemplo, mañana o una fiesta): *Run workflow* y escribe la fecha `AAAA-MM-DD`.
+- **Reenviar el de hoy** (por ejemplo, si lo borraste): *Actions → Liturgia diaria al Kindle → Run workflow*. Salmodiando solo ofrece las Horas del día en curso, así que no se pueden pedir otros días.
 - **Descargar el EPUB** sin esperar al Kindle: abre cualquier ejecución en *Actions* y baja el archivo del apartado *Artifacts* (se guarda 14 días).
 - **Cambiar qué horas y en qué orden**: en **Settings → Secrets and variables → Actions → Variables**, crea la variable `ORDEN`. Por ejemplo: `laudes,evangelio,sexta,visperas,completas`. También admite `oficio`, `tercia` y `nona`.
 - **Otro correo que no sea Gmail**: añade los secretos `SMTP_HOST` y `SMTP_PORT` (por ejemplo, Outlook: `smtp-mail.outlook.com` y `587`).
@@ -56,10 +56,10 @@ Ya está. Desde ahora llegará solo cada día.
 ## Para quien quiera tocar el código
 
 ```
-python generar.py --fecha 2026-12-25 --no-enviar   # crea el EPUB en ./salida
+python generar.py --no-enviar                       # crea el EPUB de hoy en ./salida
 python pruebas/test_sin_red.py                      # pruebas sin conexión
 ```
 
-El flujo **Prueba (sin enviar)** genera varias fechas difíciles (Navidad, Ramos, Viernes Santo…) y guarda los libros y las páginas descargadas en la rama `resultados`.
+El flujo **Prueba (sin enviar)** genera el libro de hoy y prueba el Evangelio de días difíciles (Navidad, Ramos, Viernes Santo…). Guarda los libros y las páginas descargadas en la rama `resultados`.
 
 La portada usa la tipografía EB Garamond (licencia SIL OFL, en `liturgia/tipografia/`).

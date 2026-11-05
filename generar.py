@@ -60,7 +60,8 @@ def comprobar_epub(ruta: Path):
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--fecha", default=os.environ.get("FECHA", "").strip(), help="AAAA-MM-DD")
+    ap.add_argument("--fecha", default=os.environ.get("FECHA", "").strip(),
+                    help="AAAA-MM-DD (Salmodiando solo sirve las Horas del día en curso)")
     ap.add_argument("--no-enviar", action="store_true")
     ap.add_argument("--salida", default=str(RAIZ / "salida"))
     ap.add_argument("--guardar-html", default="", help="carpeta donde guardar las páginas descargadas")
@@ -102,8 +103,19 @@ def main() -> int:
         resumen("\nNo se pudo descargar nada; no se envía ningún libro.")
         return 1
 
+    # Celebración: la de la Archidiócesis de Madrid (calendario de España);
+    # si no estuviera, la de Salmodiando. Y la semana del salterio.
+    datos = next((s.datos for s in secciones if s.datos), {})
+    celebracion = celebracion or datos.get("celebracion", "")
+    salterio = datos.get("salterio", "")
+
+    ultimo = os.environ.get("ULTIMO_INTENTO", "true").lower() != "false"
+    if avisos and programado and not ultimo:
+        resumen("\nFalta alguna parte: no se envía todavía; se reintentará más tarde.")
+        return 0
+
     ruta = Path(args.salida) / epub.nombre_archivo(d)
-    epub.construir(d, celebracion, secciones, avisos, ruta)
+    epub.construir(d, celebracion, secciones, avisos, ruta, salterio=salterio)
     comprobar_epub(ruta)
     resumen(f"\nLibro creado: `{ruta.name}` ({ruta.stat().st_size // 1024} KB)")
 

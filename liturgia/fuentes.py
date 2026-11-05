@@ -17,12 +17,12 @@ import datetime as dt
 import html as html_mod
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import requests
 from bs4 import BeautifulSoup, Tag
 
-from .limpieza import Bloque, Trozo, html_a_bloques, normal, texto_plano
+from .limpieza import Bloque, Trozo, html_a_bloques, normal, texto_linea, texto_plano
 
 MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
          "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
@@ -42,6 +42,7 @@ class Seccion:
     bloques: list[Bloque]
     origen: str           # URL de donde salió (para citarla en el libro)
     subtitulo: str = ""   # p. ej. referencia del evangelio
+    datos: dict = field(default_factory=dict)  # celebración, semana del salterio…
 
 
 def fecha_larga(d: dt.date) -> str:
@@ -111,10 +112,24 @@ _RUIDO = re.compile(
 )
 
 
-def _contenedor_oracion(soup: BeautifulSoup) -> Tag:
-    """El elemento más pequeño que contiene la oración completa."""
+EXAMEN = ("Pausa en silencio para el examen de conciencia. "
+          "Puede concluirse con el acto penitencial («Yo confieso…»).")
+
+
+def _contenedor_oracion(soup: BeautifulSoup) -> tuple[Tag, bool]:
+    """Devuelve el elemento con la oración y si es el bloque propio de la web."""
     for t in soup(["script", "style", "noscript", "svg", "nav", "footer", "form", "button"]):
         t.decompose()
+    propio = soup.select_one("article.prayer")
+    if propio is not None:
+        # El examen de conciencia de Completas viene vacío (en la app es interactivo).
+        for ex in propio.select(".examen"):
+            if not ex.get_text(strip=True):
+                ex.string = EXAMEN
+                ex["class"] = ["rubric-note"]
+        return propio, True
+    # Si algún día la web cambia de estructura: el elemento más pequeño que
+    # contenga la oración completa.
     candidatos = []
     for el in soup.find_all(["main", "article", "section", "div", "body"]):
         n = normal(el.get_text(" ", strip=True))
@@ -123,20 +138,21 @@ def _contenedor_oracion(soup: BeautifulSoup) -> Tag:
     if not candidatos:
         raise FuenteError("No encuentro la oración en la página (¿ha cambiado la web?)")
     candidatos.sort(key=lambda x: x[0])
-    return candidatos[0][1]
+    return candidatos[0][1], False
 
 
-def _recortar_oracion(bloques: list[Bloque]) -> list[Bloque]:
-    # Empieza en la primera invocación «V. ...» (o en la etiqueta que la precede).
-    inicio = None
-    for i, b in enumerate(bloques):
-        t = b.texto()
-        if re.match(r"^(V\.|℣)", t) or re.match(r"^(invocaci[oó]n inicial|invitatorio)\b", normal(t)):
-            inicio = i
-            break
-    if inicio is None:
-        raise FuenteError("No encuentro el comienzo de la hora («V. ...»)")
-    # Conserva una cabecera breve inmediatamente anterior (p. ej. el título).
+def _recortar_oracion(bloques: list[Bloque], desde_invocacion: bool) -> list[Bloque]:
+    inicio = 0
+    if desde_invocacion:
+        # Empieza en la primera invocación «V. ...» (o en la etiqueta que la precede).
+        inicio = None
+        for i, b in enumerate(bloques):
+            t = b.texto()
+            if re.match(r"^(V\.|℣)", t) or re.match(r"^(invocacion inicial|invitatorio)\b", normal(t)):
+                inicio = i
+                break
+        if inicio is None:
+            raise FuenteError("No encuentro el comienzo de la hora («V. ...»)")
     salida = []
     for b in bloques[inicio:]:
         n = normal(b.texto())
@@ -148,13 +164,30 @@ def _recortar_oracion(bloques: list[Bloque]) -> list[Bloque]:
     return salida
 
 
-def _comprobar_fecha(texto_pagina: str, d: dt.date):
-    """La página debe mostrar la fecha pedida (si no, podría ser otro día)."""
-    n = normal(texto_pagina)
-    buscado = normal(f"{d.day} de {MESES[d.month - 1]}")
-    if buscado not in n:
+def datos_del_dia(html: str) -> dict:
+    """Celebración y semana del salterio según la propia página de Salmodiando."""
+    soup = BeautifulSoup(html, "lxml")
+    datos = {}
+    cel = soup.select_one(".day-hero .celebration")
+    if cel:
+        datos["celebracion"] = cel.get_text(" ", strip=True)
+    intro = soup.select_one("aside.hoy-intro p")
+    if intro:
+        for parte in intro.get_text(" ", strip=True).split("·"):
+            if "salterio" in parte.lower():
+                datos["salterio"] = parte.strip().rstrip(".")
+    return datos
+
+
+def _comprobar_fecha(soup: BeautifulSoup, d: dt.date):
+    """La página debe ser la del día pedido (si no, podría ser otro día)."""
+    buscado = f"{d.day} de {MESES[d.month - 1]} de {d.year}"
+    marca = soup.select_one(".hoy-h1-fecha")
+    texto = marca.get_text(" ", strip=True) if marca else soup.get_text(" ", strip=True)
+    # \b evita que «15 de noviembre» pase por «5 de noviembre».
+    if not re.search(r"(?<!\d)" + re.escape(normal(buscado)) + r"\b", normal(texto)):
         raise FuenteError(
-            f"La página no corresponde al {fecha_larga(d)} (no aparece «{buscado}»)."
+            f"La página no corresponde al {fecha_larga(d)}; muestra «{texto[:60]}»."
         )
 
 
@@ -182,14 +215,16 @@ def _comprobar_hora(clave: str, bloques: list[Bloque]):
 def hora(clave: str, d: dt.date) -> Seccion:
     titulo, base = HORAS[clave]
     r = descargar(base, params={"fecha": d.isoformat()})
-    return Seccion(clave, titulo, procesar_hora(r.text, clave, d), r.url)
+    sec = Seccion(clave, titulo, procesar_hora(r.text, clave, d), r.url)
+    sec.datos = datos_del_dia(r.text)
+    return sec
 
 
 def procesar_hora(html: str, clave: str, d: dt.date) -> list[Bloque]:
     soup = BeautifulSoup(html, "lxml")
-    _comprobar_fecha(soup.get_text(" ", strip=True), d)
-    cont = _contenedor_oracion(soup)
-    bloques = _recortar_oracion(html_a_bloques(cont))
+    _comprobar_fecha(soup, d)
+    cont, propio = _contenedor_oracion(soup)
+    bloques = _recortar_oracion(html_a_bloques(cont), desde_invocacion=not propio)
     _comprobar_hora(clave, bloques)
     return bloques
 
@@ -200,12 +235,6 @@ def procesar_hora(html: str, clave: str, d: dt.date) -> list[Bloque]:
 
 API_MADRID = "https://oracionyliturgia.archimadrid.org/wp-json/wp/v2/posts"
 CATEGORIA_LECTURAS = 10  # «Lecturas de Misa»
-
-_INICIO_EVANGELIO = re.compile(
-    r"^(lectura|comienzo|conclusion|lectura continuada) del santo evangelio|^lectura de la pasion|"
-    r"^\+?\s*lectura del santo evangelio"
-)
-
 
 def _post_del_dia(d: dt.date) -> dict:
     marca = d.strftime("%d/%m/%Y")
@@ -247,49 +276,86 @@ def evangelio(d: dt.date) -> tuple[Seccion, str]:
     post = _post_del_dia(d)
     bloques, referencias = procesar_evangelio(post["content"]["rendered"])
     return (
-        Seccion("evangelio", "Evangelio del día", bloques, post.get("link", API_MADRID),
-                subtitulo=referencias[0]),
+        Seccion("evangelio", "Evangelio del día", bloques, post.get("link", API_MADRID)),
         celebracion_del_dia(post, d),
     )
 
 
+_ETIQUETA_EVANGELIO = re.compile(r"^evangelio\b")
+_REFERENCIA_EVANGELIO = re.compile(
+    r"^(lectura|comienzo|conclusion) del santo evangelio|^lectura de la pasion|"
+    r"^pasion de nuestro senor jesucristo segun"
+)
+_SOBRANTE = re.compile(r"^(forma larga y forma breve|forma larga|forma breve)\.?$")
+
+
 def procesar_evangelio(html: str) -> tuple[list[Bloque], list[str]]:
+    """Extrae el evangelio de las lecturas del día.
+
+    En la web de Madrid el evangelio empieza con un párrafo cuya primera línea
+    es «EVANGELIO» (seguida del título y de la referencia) y termina con
+    «Palabra del Señor.». Si hay forma larga y breve (Ramos), se queda con la
+    larga, que contiene a la breve.
+    """
     bloques = html_a_bloques(html)
-    textos = [normal(b.texto()) for b in bloques]
+    primera = [normal(texto_linea(b.lineas[0])) for b in bloques]
 
-    segmentos: list[list[Bloque]] = []
-    referencias: list[str] = []
-    i = 0
-    while i < len(bloques):
-        if _INICIO_EVANGELIO.match(textos[i]):
-            # Incluye el título del evangelio si va justo antes (frase breve).
-            ini = i
-            if i > 0 and len(textos[i - 1]) < 220 and not re.match(
-                r"^(aleluya|evangelio$|palabra de dios|r\.|salmo|segunda lectura|primera lectura)",
-                textos[i - 1],
-            ) and not textos[i - 1].endswith("palabra de dios."):
-                ini = i - 1
-            fin = None
-            for j in range(i, len(bloques)):
-                if "palabra del senor" in textos[j]:
-                    fin = j
-                    break
-            if fin is None:
-                raise FuenteError("El evangelio no termina con «Palabra del Señor»")
-            segmentos.append(bloques[ini:fin + 1])
-            referencias.append(bloques[i].texto().splitlines()[0])
-            i = fin + 1
-            continue
-        i += 1
+    inicios = [i for i, t in enumerate(primera) if _ETIQUETA_EVANGELIO.match(t)]
+    if not inicios:  # por si algún día falta la etiqueta: buscar la referencia
+        inicios = [i for i, t in enumerate(primera) if _REFERENCIA_EVANGELIO.match(t)]
 
+    segmentos: list[tuple[str, list[Bloque]]] = []
+    fin_anterior = -1
+    for ini in inicios:
+        if ini <= fin_anterior:
+            continue  # etiqueta interior («EVANGELIO (forma larga)»)
+        fin = next((j for j in range(ini, len(bloques))
+                    if "palabra del senor" in normal(bloques[j].texto())), None)
+        if fin is None:
+            raise FuenteError("El evangelio no termina con «Palabra del Señor»")
+        segmentos.append((primera[ini], bloques[ini:fin + 1]))
+        fin_anterior = fin
+
+    if len(segmentos) > 1:
+        largos = [s for s in segmentos if "forma breve" not in s[0]]
+        segmentos = largos or segmentos[:1]
     if not segmentos:
         raise FuenteError("No encuentro el evangelio en las lecturas del día")
-    if sum(len(texto_plano(s)) for s in segmentos) < 250:
-        raise FuenteError("El texto del evangelio es demasiado corto")
 
     todos: list[Bloque] = []
-    for k, seg in enumerate(segmentos):
-        if k:  # varios evangelios (Navidad, Ramos...): separador visible
-            todos.append(Bloque(lineas=[[Trozo("* * *")]]))
-        todos.extend(seg)
+    referencias: list[str] = []
+    for k, (_, seg) in enumerate(segmentos):
+        if k:  # varios evangelios (p. ej. misas distintas): separador visible
+            todos.append(Bloque(lineas=[[Trozo("* * *")]], clase="nota"))
+        referencia = ""
+        for b in seg:
+            cuerpo: list = []
+
+            def soltar():
+                if cuerpo:
+                    todos.append(Bloque(lineas=list(cuerpo)))
+                    cuerpo.clear()
+
+            for linea in b.lineas:
+                t = normal(texto_linea(linea))
+                if _ETIQUETA_EVANGELIO.match(t) or _SOBRANTE.match(t):
+                    continue  # «EVANGELIO», «Forma larga y forma breve»…
+                if _REFERENCIA_EVANGELIO.match(t):
+                    soltar()
+                    if referencia and t == normal(referencia):
+                        continue  # referencia repetida
+                    referencia = referencia or texto_linea(linea)
+                    todos.append(Bloque(lineas=[linea], clase="ref"))
+                elif not referencia:
+                    soltar()  # lo que va antes de la referencia es el título
+                    todos.append(Bloque(lineas=[linea], clase="titulo"))
+                else:
+                    cuerpo.append(linea)
+            soltar()
+        if not referencia:
+            raise FuenteError("No encuentro la referencia del evangelio («Lectura del santo Evangelio…»)")
+        referencias.append(referencia)
+
+    if len(texto_plano(todos)) < 250:
+        raise FuenteError("El texto del evangelio es demasiado corto")
     return todos, referencias

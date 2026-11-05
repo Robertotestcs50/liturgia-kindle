@@ -66,6 +66,7 @@ class Trozo:
 class Bloque:
     lineas: list[list[Trozo]] = field(default_factory=lambda: [[]])
     titulo: bool = False
+    clase: str = ""  # «salmo», «ref», «nota»… cuando la web lo indica
 
     def texto(self) -> str:
         return "\n".join(texto_linea(l) for l in self.lineas).strip()
@@ -126,11 +127,29 @@ class _Lector:
             n = negrita or nombre in NEGRITA
             r = rubrica or es_rubrica(hijo)
             if nombre in BLOQUE:
+                es_titulo = nombre in TITULOS or hijo.get("role") == "heading"
                 self.cerrar()
-                self.recorrer(hijo, c, n or nombre in TITULOS, r)
-                self.cerrar(titulo=nombre in TITULOS)
+                self.actual.clase = _clase_origen(hijo)
+                self.recorrer(hijo, c, n or es_titulo, r)
+                self.cerrar(titulo=es_titulo)
             else:
                 self.recorrer(hijo, c, n, r)
+
+
+# Clases de la web que ya dicen qué es cada bloque.
+CLASES_ORIGEN = {
+    "psalm-ref": "salmo",
+    "psalm-title": "salmo",
+    "ref": "ref",
+    "rubric-note": "nota",
+}
+
+
+def _clase_origen(tag: Tag) -> str:
+    for c in tag.get("class") or []:
+        if c in CLASES_ORIGEN:
+            return CLASES_ORIGEN[c]
+    return ""
 
 
 def _oculto(tag: Tag) -> bool:
@@ -197,12 +216,17 @@ _RE_SECCION = re.compile(
 _RE_TITULO_SALMO = re.compile(
     r"^(?:salmo|cantico|cántico|benedictus|magnificat|nunc dimittis|te deum)\b", re.I
 )
-_RE_ANTIFONA = re.compile(r"^(ant(?:[ií]fona)?\.?\s*(?:\d+\.?)?)\s*", re.I)
+# «Ant.», «Ant. 1», «Ant 2.», pero nunca palabras como «Antes».
+_RE_ANTIFONA = re.compile(r"^(ant\.(?:\s*\d+\.?)?|ant\s+\d+\.?)\s*", re.I)
 _RE_VR = re.compile(r"^((?:V|R|℣|℟)\s*[\./:]|℣|℟)\s*")
 _RE_ASTERISCO = re.compile(r"^(\*|†)\s*")
 
 
 def clasificar(b: Bloque) -> str:
+    if b.clase == "salmo" and len(b.lineas) == 1:
+        return "titulo-salmo"
+    if b.clase in ("ref", "nota", "titulo"):
+        return b.clase
     t = b.texto()
     n = normal(t)
     una_linea = len(b.lineas) == 1
@@ -214,7 +238,7 @@ def clasificar(b: Bloque) -> str:
         or re.match(r"^(salmo|cántico|cantico)\s+[\dIVXLC]", t, re.I)
     ):
         return "titulo-salmo"
-    if _RE_ANTIFONA.match(t) and not re.match(r"^antífona (final|de la|mariana|a la)", t, re.I):
+    if _RE_ANTIFONA.match(t):
         return "antifona"
     if b.titulo and una_linea and len(t) <= 90:
         return "seccion"
@@ -241,28 +265,31 @@ def _linea_xhtml(linea: list[Trozo], quitar_negrita=False) -> str:
         m = patron.match(plano)
         if m:
             etiqueta = m.group(1).strip()
-            resto = _quitar_prefijo(linea, len(m.group(0)))
+            resto = _quitar_prefijo(linea, m.group(1))
             cuerpo = "".join(_trozo_xhtml(t) for t in resto).strip()
             return f'<span class="r">{escape(etiqueta, quote=False)}</span> {cuerpo}'.rstrip()
     return "".join(_trozo_xhtml(t) for t in linea).strip()
 
 
-def _quitar_prefijo(linea: list[Trozo], n: int) -> list[Trozo]:
-    """Quita los primeros n caracteres (del texto normalizado) de la línea."""
+def _quitar_prefijo(linea: list[Trozo], prefijo: str) -> list[Trozo]:
+    """Quita de la línea el prefijo dado («V.», «Ant. 1»…), contando solo los
+    caracteres visibles para que los espacios entre etiquetas no descuadren."""
+    pendientes = len(re.sub(r"\s+", "", prefijo))
     resto: list[Trozo] = []
-    restante = n
     for t in linea:
-        txt = re.sub(r"\s+", " ", t.texto)
-        if restante <= 0:
+        if pendientes <= 0:
             resto.append(t)
             continue
-        if not resto and restante > 0:
-            txt = txt.lstrip()
-        if len(txt) <= restante:
-            restante -= len(txt)
-            continue
-        resto.append(Trozo(txt[restante:], t.cursiva, t.negrita, t.rubrica))
-        restante = 0
+        txt = t.texto
+        i = 0
+        while i < len(txt) and pendientes > 0:
+            if not txt[i].isspace():
+                pendientes -= 1
+            i += 1
+        if i < len(txt):
+            resto.append(Trozo(txt[i:], t.cursiva, t.negrita, t.rubrica))
+    while resto and not resto[0].texto.strip():
+        resto.pop(0)
     if resto:
         resto[0] = Trozo(resto[0].texto.lstrip(), resto[0].cursiva, resto[0].negrita, resto[0].rubrica)
     return resto
@@ -274,6 +301,9 @@ def bloques_a_xhtml(bloques: list[Bloque]) -> str:
         tipo = clasificar(b)
         if tipo == "seccion":
             partes.append(f"<h3>{_linea_xhtml(b.lineas[0], quitar_negrita=True)}</h3>")
+        elif tipo in ("ref", "nota", "titulo"):
+            lineas = "<br/>\n".join(_linea_xhtml(l) for l in b.lineas)
+            partes.append(f'<p class="{tipo}">{lineas}</p>')
         elif tipo == "titulo-salmo":
             partes.append(f'<p class="salmo">{_linea_xhtml(b.lineas[0], quitar_negrita=True)}</p>')
         else:

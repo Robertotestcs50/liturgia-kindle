@@ -4,17 +4,15 @@ on:
   schedule:
     # GitHub usa hora UTC. 03:17 UTC = 04:17 en invierno / 05:17 en verano (España).
     - cron: "17 3 * * *"
-    # Segundo intento por si el primero falló o GitHub lo retrasó.
-    # Si ya se envió, no hace nada (no recibirás dos copias).
+    # Reintentos por si algo falló o GitHub lo retrasó. Si ya se envió, no
+    # hacen nada (nunca recibirás dos copias). Solo el último intento envía un
+    # libro incompleto, con aviso, si alguna parte sigue sin poder descargarse.
     - cron: "47 4 * * *"
+    - cron: "17 6 * * *"
   workflow_dispatch:
     inputs:
-      fecha:
-        description: "Fecha AAAA-MM-DD (vacío = hoy en España)"
-        required: false
-        default: ""
       enviar:
-        description: "Enviar al Kindle"
+        description: "Enviar al Kindle (desmarca para solo crear el EPUB y descargarlo)"
         type: boolean
         default: true
 
@@ -43,9 +41,9 @@ jobs:
       - name: Preparar y enviar el libro
         id: generar
         env:
-          FECHA: ${{ inputs.fecha }}
           ENVIAR: ${{ github.event_name == 'schedule' || inputs.enviar }}
           EVENTO: ${{ github.event_name }}
+          ULTIMO_INTENTO: ${{ github.event_name != 'schedule' || github.event.schedule == '17 6 * * *' }}
           ORDEN: ${{ vars.ORDEN }}
           KINDLE_EMAIL: ${{ secrets.KINDLE_EMAIL }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
@@ -65,7 +63,7 @@ jobs:
         if: always() && hashFiles('salida/*.epub') != ''
         uses: actions/upload-artifact@v4
         with:
-          name: liturgia-${{ inputs.fecha || 'hoy' }}-${{ github.run_id }}
+          name: liturgia-${{ github.run_id }}
           path: |
             salida/*.epub
             paginas/
