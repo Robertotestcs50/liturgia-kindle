@@ -1,0 +1,85 @@
+name: Liturgia diaria al Kindle
+
+on:
+  schedule:
+    # GitHub usa hora UTC. 03:17 UTC = 04:17 en invierno / 05:17 en verano (España).
+    - cron: "17 3 * * *"
+    # Segundo intento por si el primero falló o GitHub lo retrasó.
+    # Si ya se envió, no hace nada (no recibirás dos copias).
+    - cron: "47 4 * * *"
+  workflow_dispatch:
+    inputs:
+      fecha:
+        description: "Fecha AAAA-MM-DD (vacío = hoy en España)"
+        required: false
+        default: ""
+      enviar:
+        description: "Enviar al Kindle"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: liturgia-diaria
+  cancel-in-progress: false
+
+jobs:
+  liturgia:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Preparar y enviar el libro
+        id: generar
+        env:
+          FECHA: ${{ inputs.fecha }}
+          ENVIAR: ${{ github.event_name == 'schedule' || inputs.enviar }}
+          EVENTO: ${{ github.event_name }}
+          ORDEN: ${{ vars.ORDEN }}
+          KINDLE_EMAIL: ${{ secrets.KINDLE_EMAIL }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+        run: python generar.py --guardar-html paginas
+
+      - name: Validar el EPUB (EPUBCheck)
+        if: always() && hashFiles('salida/*.epub') != ''
+        run: |
+          pip install epubcheck==5.3.0
+          python pruebas/validar_epub.py salida/*.epub || echo "::warning::EPUBCheck encontró problemas en el libro"
+
+      - name: Guardar el libro (descargable 14 días)
+        if: always() && hashFiles('salida/*.epub') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: liturgia-${{ inputs.fecha || 'hoy' }}-${{ github.run_id }}
+          path: |
+            salida/*.epub
+            paginas/
+          retention-days: 14
+
+      - name: Anotar el envío
+        # Además, este pequeño cambio mantiene el repositorio «activo» para que
+        # GitHub nunca desactive la tarea programada por inactividad.
+        if: always()
+        run: |
+          if [ -n "$(git status --porcelain estado/)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add estado/
+            git commit -m "Enviada la liturgia del $(cat estado/ultimo_envio.txt)"
+            git push
+          fi

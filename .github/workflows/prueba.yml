@@ -1,0 +1,58 @@
+name: Prueba (sin enviar)
+
+# Genera los libros de varias fechas difíciles SIN enviarlos al Kindle y
+# guarda el resultado en la rama «resultados» para revisarlo.
+on:
+  workflow_dispatch:
+    inputs:
+      fechas:
+        description: "Fechas AAAA-MM-DD separadas por espacios (vacío = las de siempre)"
+        required: false
+        default: ""
+  push:
+    branches: [prueba]
+
+permissions:
+  contents: write
+
+jobs:
+  prueba:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt epubcheck==5.3.0
+
+      - name: Generar libros de prueba
+        env:
+          FECHAS: ${{ inputs.fechas }}
+        run: |
+          mkdir -p resultados
+          HOY=$(TZ=Europe/Madrid date +%F)
+          # hoy · sábado (I Vísperas) · domingo · Cristo Rey · Inmaculada · Navidad ·
+          # Domingo de Ramos · Viernes Santo · Sábado Santo · Pascua · Santiago
+          LISTA="${FECHAS:-$HOY 2026-11-07 2026-11-08 2026-11-22 2026-12-08 2026-12-25 2026-03-29 2026-04-03 2026-04-04 2026-04-05 2026-07-25}"
+          for F in $LISTA; do
+            echo "::group::$F"
+            python generar.py --fecha "$F" --no-enviar --salida resultados/epub \
+                   --guardar-html "resultados/html/$F" 2>&1 | tee "resultados/$F.log" || true
+            echo "::endgroup::"
+          done
+          python pruebas/validar_epub.py resultados/epub/*.epub | tee resultados/epubcheck.log || true
+
+      - name: Publicar resultados en la rama «resultados»
+        run: |
+          cd resultados
+          git init -q -b resultados
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "Resultados de prueba ${{ github.run_id }}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" resultados
