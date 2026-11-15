@@ -36,7 +36,7 @@ jobs:
         run: |
           mkdir -p resultados
           HOY=$(TZ=Europe/Madrid date +%F)
-          # Hoy (libro completo) y, solo para el evangelio, días difíciles ya pasados
+          # Hoy (libro completo) y, solo para las lecturas, días difíciles ya pasados
           # (Salmodiando únicamente sirve las Horas del día en curso):
           # Navidad · Fieles Difuntos · Epifanía · Ramos · Viernes Santo · Vigilia · Pascua · Santiago
           LISTA="${FECHAS:-$HOY 2025-12-25 2025-11-02 2026-01-06 2026-03-29 2026-04-03 2026-04-04 2026-04-05 2026-07-25}"

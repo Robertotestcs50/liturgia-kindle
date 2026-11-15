@@ -10,7 +10,7 @@ Variables de entorno (en GitHub van como «secretos»):
     KINDLE_EMAIL, SMTP_USER, SMTP_PASSWORD  obligatorias para enviar
     SMTP_HOST (smtp.gmail.com), SMTP_PORT (465), EMAIL_FROM (= SMTP_USER)
     ORDEN   partes y orden del libro (por defecto
-            laudes,sexta,visperas,completas,evangelio). También admite
+            laudes,sexta,visperas,completas,lecturas). También admite
             tercia, nona y oficio.
 """
 
@@ -31,7 +31,7 @@ from liturgia.envio import EnvioError, enviar_a_kindle
 
 RAIZ = Path(__file__).resolve().parent
 ESTADO = RAIZ / "estado" / "ultimo_envio.txt"
-ORDEN_POR_DEFECTO = "laudes,sexta,visperas,completas,evangelio"
+ORDEN_POR_DEFECTO = "laudes,sexta,visperas,completas,lecturas"
 
 
 def hoy_en_espana() -> dt.date:
@@ -78,7 +78,9 @@ def main() -> int:
         return 0
 
     orden = [c.strip().lower() for c in (os.environ.get("ORDEN") or ORDEN_POR_DEFECTO).split(",") if c.strip()]
-    validas = set(fuentes.HORAS) | {"evangelio"}
+    # «evangelio» se acepta por compatibilidad: ahora trae todas las lecturas.
+    orden = ["lecturas" if c == "evangelio" else c for c in orden]
+    validas = set(fuentes.HORAS) | {"lecturas"}
     if any(c not in validas for c in orden):
         resumen(f"ORDEN contiene partes desconocidas: {orden}. Válidas: {sorted(validas)}")
         return 1
@@ -88,15 +90,21 @@ def main() -> int:
     celebracion = ""
     for clave in orden:
         try:
-            if clave == "evangelio":
-                sec, celebracion = fuentes.evangelio(d)
+            if clave == "lecturas":
+                sec, celebracion, aviso = fuentes.lecturas(d)
+                if aviso:
+                    avisos.append(aviso)
             else:
                 sec = fuentes.hora(clave, d)
             secciones.append(sec)
             resumen(f"- ✅ {sec.titulo} ({len(fuentes.texto_plano(sec.bloques))} caracteres)")
         except Exception as e:  # una parte que falla no debe impedir recibir las demás
-            nombre = "Evangelio" if clave == "evangelio" else fuentes.HORAS[clave][0]
-            avisos.append(f"Hoy no se pudo preparar {nombre}: {e}")
+            if clave == "lecturas":
+                nombre, frase = "Lecturas", "Hoy no se pudieron preparar las lecturas"
+            else:
+                nombre = fuentes.HORAS[clave][0]
+                frase = f"Hoy no se pudo preparar {nombre}"
+            avisos.append(f"{frase}: {e}")
             resumen(f"- ❌ {nombre}: {e}")
 
     if not secciones:

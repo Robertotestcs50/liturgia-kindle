@@ -37,12 +37,13 @@ class FuenteError(Exception):
 
 @dataclass
 class Seccion:
-    clave: str            # laudes, sexta, visperas, completas, evangelio
-    titulo: str           # «Laudes», «Evangelio del día»...
+    clave: str            # laudes, sexta, visperas, completas, lecturas
+    titulo: str           # «Laudes», «Lecturas del día»...
     bloques: list[Bloque]
     origen: str           # URL de donde salió (para citarla en el libro)
     subtitulo: str = ""   # p. ej. referencia del evangelio
     datos: dict = field(default_factory=dict)  # celebración, semana del salterio…
+    apartados: list = field(default_factory=list)  # [(ancla, título)] para el índice
 
 
 def fecha_larga(d: dt.date) -> str:
@@ -272,13 +273,196 @@ def celebracion_del_dia(post: dict, d: dt.date) -> str:
     return t.strip()
 
 
-def evangelio(d: dt.date) -> tuple[Seccion, str]:
+def lecturas(d: dt.date) -> tuple[Seccion, str, str]:
+    """Lecturas de la misa del día. Devuelve (sección, celebración, aviso).
+
+    Si algún día la web cambiara de forma y no se pudieran separar todas las
+    lecturas, se entrega al menos el Evangelio y se devuelve un aviso.
+    """
     post = _post_del_dia(d)
-    bloques, referencias = procesar_evangelio(post["content"]["rendered"])
-    return (
-        Seccion("evangelio", "Evangelio del día", bloques, post.get("link", API_MADRID)),
-        celebracion_del_dia(post, d),
-    )
+    html = post["content"]["rendered"]
+    origen = post.get("link", API_MADRID)
+    celebracion = celebracion_del_dia(post, d)
+    try:
+        bloques, apartados = procesar_lecturas(html)
+        aviso = ""
+    except FuenteError as e:
+        bloques, _ = procesar_evangelio(html)
+        apartados = []
+        aviso = f"Hoy solo se pudo preparar el Evangelio, no el resto de lecturas ({e})."
+        bloques.insert(0, Bloque(lineas=[[Trozo(
+            "Hoy no se pudieron preparar las demás lecturas; aquí tienes el Evangelio.")]], clase="nota"))
+    sec = Seccion("lecturas", "Lecturas del día", bloques, origen)
+    sec.apartados = apartados
+    return sec, celebracion, aviso
+
+
+# --------------------------------------------------------------------------
+# Todas las lecturas de la misa
+# --------------------------------------------------------------------------
+
+def _lineas_con_clase(p: Tag) -> list[tuple[str, str]]:
+    """Parte un párrafo por sus <br> y dice qué clase de título tiene cada línea
+    («Tit_Negro_Cur» = etiqueta, «Tit_Lectura» = título, «Tit_Negro_Normal» =
+    cita o respuesta). Las líneas sin clase devuelven ""."""
+    lineas: list[list] = [["", ""]]
+    for nodo in p.descendants:
+        if isinstance(nodo, Tag):
+            if nodo.name == "br":
+                lineas.append(["", ""])
+            continue
+        texto = str(nodo)
+        if not texto.strip():
+            lineas[-1][1] += " "
+            continue
+        clase = ""
+        for padre in nodo.parents:
+            if padre is p:
+                break
+            for c in padre.get("class") or []:
+                if c.startswith("Tit_"):
+                    clase = c
+                    break
+            if clase:
+                break
+        if clase and not lineas[-1][0]:
+            lineas[-1][0] = clase
+        lineas[-1][1] += texto
+    salida = []
+    for clase, texto in lineas:
+        texto = re.sub(r"\s+", " ", texto.replace("\xa0", " ")).strip()
+        if texto:
+            salida.append((clase, texto))
+    return salida
+
+
+def _es_palabra_del_senor(b: Bloque) -> bool:
+    """La aclamación final, sola en su línea (no «...recordó la palabra del Señor»)."""
+    return bool(re.match(r"^palabra del senor\.?$", normal(texto_linea(b.lineas[-1]))))
+
+
+def _frase(t: str) -> str:
+    """«PRIMERA LECTURA» -> «Primera lectura»."""
+    t = t.strip().rstrip(".:")
+    return t[:1].upper() + t[1:].lower() if t else t
+
+
+def _bloque(texto: str, clase: str = "", titulo: bool = False) -> Bloque:
+    return Bloque(lineas=[[Trozo(texto)]], clase=clase, titulo=titulo)
+
+
+def procesar_lecturas(html: str) -> tuple[list[Bloque], list[tuple[str, str]]]:
+    """Todas las lecturas de la misa, tal como las publica la Archidiócesis de
+    Madrid: primera lectura, salmo, segunda lectura (domingos y fiestas),
+    secuencia (Pascua, Pentecostés), aleluya o versículo y Evangelio.
+
+    Devuelve los bloques y la lista de apartados (ancla, título) para el índice.
+    """
+    soup = BeautifulSoup(html, "lxml")
+    bloques: list[Bloque] = []
+    apartados: list[tuple[str, str]] = []
+    en_evangelio = False
+    ref_evangelio = ""
+    termina = False
+
+    def seccion(texto: str):
+        ancla = f"l{len(apartados) + 1}"
+        b = _bloque(texto, clase="seccion", titulo=True)
+        b.ancla = ancla
+        bloques.append(b)
+        apartados.append((ancla, texto))
+
+    for p in soup.find_all("p"):
+        if p.find_parent("p") is not None:
+            continue
+        lineas = _lineas_con_clase(p)
+        if not lineas:
+            continue
+        clases = {c for c, _ in lineas}
+        textos = {c: t for c, t in reversed(lineas)}  # primera línea de cada clase
+        primera = normal(lineas[0][1])
+
+        if "Tit_Negro_Cur" in clases:
+            etiqueta = textos["Tit_Negro_Cur"]
+            n = normal(etiqueta)
+            if n.startswith("evangelio"):
+                if "forma breve" in n and ref_evangelio:
+                    break  # la forma breve ya está dentro de la larga (Ramos)
+                if "forma larga" in n:
+                    continue
+                en_evangelio = True
+                seccion("Evangelio")
+                if "Tit_Lectura" in textos:
+                    bloques.append(_bloque(textos["Tit_Lectura"], "titulo"))
+                if "Tit_Negro_Normal" in textos:
+                    ref_evangelio = textos["Tit_Negro_Normal"]
+                    bloques.append(_bloque(ref_evangelio, "ref"))
+            elif n.startswith("salmo"):
+                seccion(_frase(etiqueta))
+                if "Tit_Lectura" in textos:
+                    bloques.append(_bloque(textos["Tit_Lectura"], "ref"))
+                if "Tit_Negro_Normal" in textos:
+                    bloques.append(_bloque(textos["Tit_Negro_Normal"]))
+            else:
+                seccion(_frase(etiqueta))
+                if "Tit_Lectura" in textos:
+                    bloques.append(_bloque(textos["Tit_Lectura"], "titulo"))
+                if "Tit_Negro_Normal" in textos:
+                    bloques.append(_bloque(textos["Tit_Negro_Normal"], "ref"))
+            continue
+
+        if "Tit_Lectura" in clases:
+            cab = textos["Tit_Lectura"]
+            m = re.match(r"(?i)^(aleluya|vers[ií]culo(?: antes del evangelio)?|aclamaci[oó]n antes del evangelio)\b[\s.:]*(.*)$", cab)
+            respuesta = normal(textos.get("Tit_Negro_Normal", ""))
+            if m:
+                seccion("Aleluya" if m.group(1).lower() == "aleluya" else "Versículo antes del Evangelio")
+                if m.group(2).strip():
+                    bloques.append(_bloque(m.group(2).strip(), "ref"))
+            elif re.match(r"^(r\.\s*)?aleluya", respuesta):
+                # A veces la cabecera solo trae la cita («Jn 6, 39 / R. Aleluya…»).
+                seccion("Aleluya")
+                bloques.append(_bloque(cab, "ref"))
+            else:
+                seccion("Salmo responsorial")
+                bloques.append(_bloque(cab, "ref"))
+            if "Tit_Negro_Normal" in textos:
+                bloques.append(_bloque(textos["Tit_Negro_Normal"]))
+            continue
+
+        if clases == {"Tit_Negro_Normal"} and len(lineas) == 1:
+            if primera == "secuencia":
+                seccion("Secuencia")
+                continue
+            if primera.startswith("no se dice"):
+                bloques.append(_bloque(lineas[0][1], "nota"))
+                continue
+
+        if _SOBRANTE.match(primera):
+            continue  # «Forma larga y forma breve»
+        if re.match(r"^evangelio \(forma larga\)", primera):
+            continue
+        if re.match(r"^evangelio \(forma breve\)", primera) and ref_evangelio:
+            break  # la forma breve ya está dentro de la larga (Ramos)
+        if en_evangelio and ref_evangelio and normal(ref_evangelio) == primera:
+            continue  # referencia repetida tras «EVANGELIO (forma larga)»
+
+        nuevos = html_a_bloques(str(p))
+        bloques.extend(nuevos)
+        if en_evangelio and nuevos and _es_palabra_del_senor(nuevos[-1]):
+            termina = True
+            break
+
+    nombres = [normal(t) for _, t in apartados]
+    if "evangelio" not in nombres or not termina:
+        raise FuenteError("no encuentro el Evangelio completo entre las lecturas")
+    if not any("lectura" in n for n in nombres):
+        raise FuenteError("no encuentro la primera lectura")
+    if not ref_evangelio:
+        raise FuenteError("falta la cita del Evangelio")
+    if len(texto_plano(bloques)) < 800:
+        raise FuenteError("las lecturas son demasiado cortas")
+    return bloques, apartados
 
 
 _ETIQUETA_EVANGELIO = re.compile(r"^evangelio\b")
@@ -310,7 +494,7 @@ def procesar_evangelio(html: str) -> tuple[list[Bloque], list[str]]:
         if ini <= fin_anterior:
             continue  # etiqueta interior («EVANGELIO (forma larga)»)
         fin = next((j for j in range(ini, len(bloques))
-                    if "palabra del senor" in normal(bloques[j].texto())), None)
+                    if _es_palabra_del_senor(bloques[j])), None)
         if fin is None:
             raise FuenteError("El evangelio no termina con «Palabra del Señor»")
         segmentos.append((primera[ini], bloques[ini:fin + 1]))

@@ -40,6 +40,7 @@ p.titulo { font-weight: bold; text-align: center; margin: 0.5em 0 0.3em; }
 .indice p { margin: 0 0 0.9em; font-size: 1.1em; text-align: center; }
 .portada p { text-align: center; }
 .indice a { text-decoration: none; }
+.indice .sub { font-size: 0.8em; }
 .aviso { border: 1px solid #888; padding: 0.6em; font-style: italic; }
 .fuente { font-size: 0.75em; color: #555; margin-top: 2.5em; text-align: center; }
 .cruz { text-align: center; font-size: 1.4em; margin: 0.6em 0; }
@@ -152,9 +153,16 @@ def construir(d: dt.date, celebracion: str, secciones: list[Seccion],
     ).encode()
 
     # Página de inicio con índice
-    enlaces = "\n".join(
-        f'<p><a href="{s.clave}.xhtml">{escape(s.titulo)}</a></p>' for s in secciones
-    )
+    def enlace(s):
+        linea = f'<p><a href="{s.clave}.xhtml">{escape(s.titulo)}</a>'
+        if s.apartados:  # accesos directos: Primera lectura · Salmo · Evangelio…
+            subs = " · ".join(
+                f'<a href="{s.clave}.xhtml#{a}">{escape(t)}</a>' for a, t in s.apartados
+            )
+            linea += f'<br/>\n<span class="sub">{subs}</span>'
+        return linea + "</p>"
+
+    enlaces = "\n".join(enlace(s) for s in secciones)
     aviso_html = "".join(f'<p class="aviso">{escape(a)}</p>' for a in avisos)
     archivos["OEBPS/inicio.xhtml"] = XHTML.format(
         titulo=escape(dia),
@@ -182,9 +190,15 @@ def construir(d: dt.date, celebracion: str, secciones: list[Seccion],
     archivos["OEBPS/estilo.css"] = CSS.encode()
 
     # Navegación EPUB 3
-    nav_items = "\n".join(
-        f'<li><a href="{s.clave}.xhtml">{escape(s.titulo)}</a></li>' for s in secciones
-    )
+    def nav_li(s):
+        li = f'<li><a href="{s.clave}.xhtml">{escape(s.titulo)}</a>'
+        if s.apartados:
+            li += "\n<ol>\n" + "\n".join(
+                f'<li><a href="{s.clave}.xhtml#{a}">{escape(t)}</a></li>' for a, t in s.apartados
+            ) + "\n</ol>"
+        return li + "</li>"
+
+    nav_items = "\n".join(nav_li(s) for s in secciones)
     archivos["OEBPS/nav.xhtml"] = f"""<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="es" lang="es">
@@ -206,15 +220,25 @@ def construir(d: dt.date, celebracion: str, secciones: list[Seccion],
 """.encode()
 
     # NCX (compatibilidad)
-    puntos = [("inicio", dia)] + [(s.clave, s.titulo) for s in secciones]
-    nav_points = "\n".join(
-        f'<navPoint id="n{i}" playOrder="{i}"><navLabel><text>{escape(t)}</text></navLabel>'
-        f'<content src="{c}.xhtml"/></navPoint>'
-        for i, (c, t) in enumerate(puntos, start=1)
+    orden = 0
+
+    def punto(src, texto, hijos=()):
+        nonlocal orden
+        orden += 1
+        xml = (f'<navPoint id="n{orden}" playOrder="{orden}"><navLabel><text>{escape(texto)}</text>'
+               f'</navLabel><content src="{src}"/>')
+        for h_src, h_texto in hijos:
+            xml += punto(h_src, h_texto)
+        return xml + "</navPoint>\n"
+
+    nav_points = punto("inicio.xhtml", dia) + "".join(
+        punto(f"{s.clave}.xhtml", s.titulo,
+              [(f"{s.clave}.xhtml#{a}", t) for a, t in s.apartados])
+        for s in secciones
     )
     archivos["OEBPS/toc.ncx"] = f"""<?xml version="1.0" encoding="utf-8"?>
 <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1" xml:lang="es">
-<head><meta name="dtb:uid" content="urn:uuid:{ident}"/><meta name="dtb:depth" content="1"/>
+<head><meta name="dtb:uid" content="urn:uuid:{ident}"/><meta name="dtb:depth" content="2"/>
 <meta name="dtb:totalPageCount" content="0"/><meta name="dtb:maxPageNumber" content="0"/></head>
 <docTitle><text>{escape(titulo_libro)}</text></docTitle>
 <navMap>

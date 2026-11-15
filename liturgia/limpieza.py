@@ -67,6 +67,7 @@ class Bloque:
     lineas: list[list[Trozo]] = field(default_factory=lambda: [[]])
     titulo: bool = False
     clase: str = ""  # «salmo», «ref», «nota»… cuando la web lo indica
+    ancla: str = ""  # id para enlazar desde el índice
 
     def texto(self) -> str:
         return "\n".join(texto_linea(l) for l in self.lineas).strip()
@@ -223,6 +224,8 @@ _RE_ASTERISCO = re.compile(r"^(\*|†)\s*")
 
 
 def clasificar(b: Bloque) -> str:
+    if b.clase == "seccion":
+        return "seccion"
     if b.clase == "salmo" and len(b.lineas) == 1:
         return "titulo-salmo"
     if b.clase in ("ref", "nota", "titulo"):
@@ -256,8 +259,16 @@ def _trozo_xhtml(t: Trozo) -> str:
     return s
 
 
+_R_FINAL = re.compile(r"(\s)(R\.|℟\.?)(\s*)$")
+
+
 def _linea_xhtml(linea: list[Trozo], quitar_negrita=False) -> str:
-    """Convierte una línea a XHTML marcando en rojo V./R./Ant. del comienzo."""
+    """Convierte una línea a XHTML marcando en rojo V./R./Ant. del comienzo y la
+    «R.» con que acaban las estrofas del salmo responsorial."""
+    return _R_FINAL.sub(r'\1<span class="r">\2</span>', _linea_xhtml_base(linea, quitar_negrita))
+
+
+def _linea_xhtml_base(linea: list[Trozo], quitar_negrita=False) -> str:
     if quitar_negrita:
         linea = [Trozo(t.texto, t.cursiva, False, t.rubrica) for t in linea]
     plano = texto_linea(linea)
@@ -300,7 +311,8 @@ def bloques_a_xhtml(bloques: list[Bloque]) -> str:
     for b in bloques:
         tipo = clasificar(b)
         if tipo == "seccion":
-            partes.append(f"<h3>{_linea_xhtml(b.lineas[0], quitar_negrita=True)}</h3>")
+            ident = f' id="{b.ancla}"' if b.ancla else ""
+            partes.append(f"<h3{ident}>{_linea_xhtml(b.lineas[0], quitar_negrita=True)}</h3>")
         elif tipo in ("ref", "nota", "titulo"):
             lineas = "<br/>\n".join(_linea_xhtml(l) for l in b.lineas)
             partes.append(f'<p class="{tipo}">{lineas}</p>')

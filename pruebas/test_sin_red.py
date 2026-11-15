@@ -113,11 +113,60 @@ def test_varios_evangelios():
     assert len(refs) == 2 and "* * *" in texto_plano(bloques)
 
 
+LECTURAS = """
+<p><span class="Tit_Negro_Cur">PRIMERA LECTURA</span><br /> <span class="Tit_Lectura">Todo eso que para mí era ganancia</span><br /><span class="Tit_Negro_Normal">Lectura de la carta del apóstol san Pablo a los Filipenses 3, 3-8a</span></p>
+<p>Hermanos: nosotros somos los verdaderos circuncisos, que damos culto según el Espíritu de Dios,
+y que ponemos nuestra gloria en Cristo Jesús sin confiar en la carne, aunque yo tendría motivos
+para confiar en ella. Todo eso que para mí era ganancia, lo consideré pérdida a causa de Cristo.</p>
+<p><span class="Tit_Negro_Normal">Palabra de Dios.</p>
+<p></span></p>
+<p><span class="Tit_Lectura">Sal 104, 2-3. 4-5. 6-7</span><br /><span class="Tit_Negro_Normal">R. Que se alegren los que buscan al Señor.</span></p>
+<p>Cantadle al son de instrumentos,<br />hablad de sus maravillas. <br />Gloriaos de su nombre santo, <br />que se alegren los que buscan al Señor. R.</p>
+<p><span class="Tit_Lectura">Jn 6, 39</span><br /><span class="Tit_Negro_Normal">R. Aleluya, aleluya, aleluya.</span></p>
+<p>Venid a mí todos los que estáis cansados y agobiados, y yo os aliviaré. R. </p>
+<p><span class="Tit_Negro_Cur">EVANGELIO</span><br /> <span class="Tit_Lectura">Habrá más alegría en el cielo</span><br /><span class="Tit_Negro_Normal">Lectura del santo Evangelio según san Lucas 15, 1-10</span></p>
+<p>En aquel tiempo, solían acercarse a Jesús todos los publicanos y los pecadores a escucharlo.
+Y los fariseos y los escribas murmuraban entre ellos.</p>
+<p>Entonces Pedro se acordó de la palabra del Señor</p>
+<p>«Os digo que así también habrá más alegría en el cielo por un solo pecador que se convierta
+que por noventa y nueve justos que no necesitan convertirse».</p>
+<p>Palabra del Señor.</p>
+<p>Comentario que ya no es parte de las lecturas.</p>
+"""
+
+
+def test_lecturas_completas():
+    bloques, apartados = fuentes.procesar_lecturas(LECTURAS)
+    assert [t for _, t in apartados] == [
+        "Primera lectura", "Salmo responsorial", "Aleluya", "Evangelio"]
+    texto = texto_plano(bloques)
+    # No corta el Evangelio por «la palabra del Señor» en mitad del texto.
+    assert "noventa y nueve justos" in texto
+    assert texto.rstrip().endswith("Palabra del Señor.")
+    assert "Comentario" not in texto
+    x = bloques_a_xhtml(bloques)
+    assert '<h3 id="l1">Primera lectura</h3>' in x
+    assert '<p class="ref">Lectura del santo Evangelio según san Lucas 15, 1-10</p>' in x
+    assert 'buscan al Señor. <span class="r">R.</span>' in x  # «R.» final en rojo
+
+
+def test_lecturas_sin_formato_dan_el_evangelio():
+    # Si la web cambiara y no hubiera etiquetas, no se pierde el Evangelio.
+    try:
+        fuentes.procesar_lecturas(EVANGELIO)
+    except fuentes.FuenteError:
+        pass
+    else:
+        raise AssertionError("sin etiquetas debía fallar para usar el plan B")
+    bloques, refs = fuentes.procesar_evangelio(EVANGELIO)
+    assert refs and "Palabra del Señor" in texto_plano(bloques)
+
+
 def test_libro_completo(tmp_path=Path("/tmp")):
     secs = [
         fuentes.Seccion("sexta", "Sexta", fuentes.procesar_hora(PAGINA_HORA, "sexta", D), "https://x"),
-        fuentes.Seccion("evangelio", "Evangelio del día", fuentes.procesar_evangelio(EVANGELIO)[0], "https://y",
-                        subtitulo="Lucas 14, 25-33"),
+        fuentes.Seccion("lecturas", "Lecturas del día", fuentes.procesar_lecturas(LECTURAS)[0], "https://y",
+                        apartados=fuentes.procesar_lecturas(LECTURAS)[1]),
     ]
     ruta = epub.construir(D, "San Carlos Borromeo", secs, ["aviso de prueba"], Path(tmp_path) / "t.epub")
     import generar
