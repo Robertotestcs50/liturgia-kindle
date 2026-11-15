@@ -3,7 +3,7 @@
 
 Uso:
     python generar.py                     # hoy (hora de España), y lo envía
-    python generar.py --fecha 2026-12-25  # otro día
+    python generar.py --fecha 2026-12-25  # otro día (las Horas solo están disponibles para hoy)
     python generar.py --no-enviar         # solo crea el EPUB en ./salida
 
 Variables de entorno (en GitHub van como «secretos»):
