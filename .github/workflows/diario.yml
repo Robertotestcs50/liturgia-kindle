@@ -2,6 +2,9 @@ name: Liturgia diaria al Kindle
 
 on:
   schedule:
+    # IMPORTANTE: GitHub puede retrasar estas ejecuciones varias horas (pasa con
+    # cuentas nuevas). Lo que de verdad dispara el envío puntual es el despertador
+    # externo (cron-job.org, ver README). Estas quedan como respaldo.
     # Hora de España (GitHub ajusta solo el cambio de horario de verano).
     # El libro debe estar en el Kindle antes de las 3:00.
     #  - 00:37, 01:17, 01:57: solo se envía si el libro está completo.
@@ -26,6 +29,10 @@ on:
         description: "Enviar al Kindle (desmarca para solo crear el EPUB y descargarlo)"
         type: boolean
         default: true
+      programado:
+        description: "Aviso del despertador externo (cron-job.org): no reenviar si ya se envió"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -53,7 +60,9 @@ jobs:
         id: generar
         env:
           ENVIAR: ${{ github.event_name == 'schedule' || inputs.enviar }}
-          EVENTO: ${{ github.event_name }}
+          # El despertador externo llama con programado=true: se comporta como un envío
+          # programado (no repite el libro si ya salió). A mano, siempre se envía.
+          EVENTO: ${{ (github.event_name == 'schedule' || inputs.programado) && 'schedule' || github.event_name }}
           ORDEN: ${{ vars.ORDEN }}
           KINDLE_EMAIL: ${{ secrets.KINDLE_EMAIL }}
           SMTP_USER: ${{ secrets.SMTP_USER }}

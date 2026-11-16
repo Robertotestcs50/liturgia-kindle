@@ -104,17 +104,62 @@ Crea estos **tres secretos**, uno a uno, con el nombre exactamente así, en may�
 4. En uno o dos minutos aparecerá una **marca verde ✅**.
 5. Con el Kindle conectado a la wifi, el libro llegará en unos minutos. Si tarda, en el Kindle ve a *Configuración → Sincronizar*.
 
-🎉 **Ya está.** Desde mañana llegará solo, cada día.
+🎉 **Ya funciona.** Falta un último paso para que llegue **puntual cada madrugada**.
+
+### Paso 6 · El despertador puntual (muy recomendable)
+
+GitHub tiene su propio reloj, pero **con cuentas nuevas suele lanzar las tareas programadas con horas de retraso**, a veces de 8 a 14 horas. Para que el libro esté en tu Kindle antes de las 3:00, usamos un despertador externo gratuito, [cron-job.org](https://cron-job.org). A la hora exacta le dice a GitHub «envía ahora», igual que cuando pulsas *Run workflow*.
+
+**6.1 · Una llave solo para lanzar el envío (GitHub)**
+
+1. Entra en <https://github.com/settings/personal-access-tokens/new>.
+2. **Token name:** `despertador liturgia`. **Expiration:** la más larga que te ofrezca (por ejemplo, un año). Apunta en tu calendario la fecha para renovarla.
+3. **Repository access:** *Only select repositories* y elige tu repositorio `liturgia-kindle`.
+4. **Permissions:** pulsa *Add permissions*, elige **Actions** y pon **Read and write**. No hace falta nada más.
+5. Pulsa **Generate token** y copia la llave, que empieza por `github_pat_`. Solo se muestra una vez.
+
+Esta llave solo sirve para lanzar el envío de este repositorio. No da acceso a tu código, a tus otros repositorios ni a tus secretos.
+
+**6.2 · El despertador (cron-job.org)**
+
+1. Crea una cuenta gratuita en <https://cron-job.org> y pulsa **Create cronjob**.
+2. En la pestaña principal (*Common*):
+   - **Title:** `Liturgia Kindle`
+   - **URL** (cambia `TU_USUARIO` por tu usuario de GitHub):
+     ```
+     https://api.github.com/repos/TU_USUARIO/liturgia-kindle/actions/workflows/diario.yml/dispatches
+     ```
+   - **Execution schedule:** *Custom*. Marca todos los días, todos los meses y todos los días de la semana. En **Hours**, marca **0, 1 y 2**. En **Minutes**, marca **5 y 35**. Así habrá intentos a las 00:05, 00:35, 01:05, 01:35, 02:05 y 02:35.
+3. En la pestaña *Advanced*:
+   - **Time zone:** `Europe/Madrid`
+   - **Request method:** `POST`
+   - **Headers:** añade estas tres cabeceras (cambia `TU_LLAVE` por la llave del paso 6.1):
+
+     | Key | Value |
+     |---|---|
+     | `Accept` | `application/vnd.github+json` |
+     | `Authorization` | `Bearer TU_LLAVE` |
+     | `Content-Type` | `application/json` |
+
+   - **Request body:**
+     ```json
+     {"ref": "main", "inputs": {"programado": "true"}}
+     ```
+4. Guarda con **Create**. Para comprobarlo, pulsa **Test run**: debe responder **204** (o 200), y en la pestaña *Actions* de GitHub aparecerá una ejecución nueva.
+
+Gracias a `"programado": "true"`, estos avisos **nunca te mandan un libro repetido**. Si el libro de ese día ya salió, no hacen nada.
+
+🎉 **Ahora sí.** Desde esta noche, el libro estará en tu Kindle antes de las 3.
 
 ---
 
 ## 🌅 En el día a día
 
-**No tienes que hacer nada.** Cada noche, a partir de las **00:37** (hora de España, también en verano), el libro se prepara y se envía. Está en tu Kindle **antes de las 3 de la mañana**.
+**No tienes que hacer nada.** Cada noche, a partir de las **00:05** (hora de España, también en verano), el libro se prepara y se envía. Con el despertador del paso 6, está en tu Kindle **antes de las 3 de la mañana**.
 
-- **Si algo falla, lo vuelve a intentar** a la 1:17, a la 1:57 y a las 2:27.
-- **Hasta las 2:20 solo se envía el libro completo.** Si a las 2:27 aún falta alguna parte, te llega igualmente con lo que sí se pudo preparar y un aviso en la primera página, para que tengas algo con lo que rezar al levantarte. Además, GitHub te manda un correo.
-- **Intentos de rescate a las 4:47 y a las 6:47.** Si solo pudo salir el libro incompleto, en cuanto esté el completo te llega también.
+- **Si algo falla, lo vuelve a intentar** cada media hora: 00:35, 1:05, 1:35, 2:05 y 2:35.
+- **Hasta las 2:20 solo se envía el libro completo.** Si a las 2:35 aún falta alguna parte, te llega igualmente con lo que sí se pudo preparar y un aviso en la primera página, para que tengas algo con lo que rezar al levantarte. Además, GitHub te manda un correo.
+- **Respaldo:** GitHub también lo intenta por su cuenta (a las 00:37, 1:17, 1:57, 2:27, 4:47 y 6:47, aunque a veces con retraso). Si solo pudo salir el libro incompleto, en cuanto esté el completo te llega también.
 - **Nunca recibirás dos copias iguales** del envío automático. Si el libro completo ya salió, los demás intentos no hacen nada.
 - **Deja el wifi del Kindle activado.** Cuando lo enciendas, el libro se descarga en unos segundos. Si no aparece, ve a *Configuración → Sincronizar*.
 - **Para reenviar el libro de hoy**, por ejemplo si lo borraste: *Actions → Liturgia diaria al Kindle → Run workflow*.
@@ -150,7 +195,7 @@ Añade dos secretos más: `SMTP_HOST` y `SMTP_PORT`. Por ejemplo, para Outlook: 
 
 ### Cambiar la hora de envío
 
-Está en el archivo `.github/workflows/diario.yml`, en las líneas `cron`, ya en **hora de España** gracias a `timezone: "Europe/Madrid"`. Por ejemplo, `"37 0 * * *"` significa las 00:37. El primer número son los minutos y el segundo, la hora.
+Cambia las horas y los minutos en tu despertador de cron-job.org (paso 6). Las horas de respaldo de GitHub están en `.github/workflows/diario.yml`, en las líneas `cron`, ya en **hora de España** gracias a `timezone: "Europe/Madrid"`. Por ejemplo, `"37 0 * * *"` significa las 00:37: el primer número son los minutos y el segundo, la hora.
 
 No adelantes el primer intento a antes de medianoche: la web de las lecturas publica el día nuevo a las 00:00.
 
@@ -167,6 +212,10 @@ No adelantes el primer intento a antes de medianoche: la web de las lecturas pub
 | Aviso *«La página no corresponde al…»* | La web aún mostraba el día anterior | Nada: se reintenta solo más tarde |
 | Aviso *«La página no indica de qué día es»* | La web de las Horas ha cambiado su diseño | Hay que ajustar el programa (`liturgia/fuentes.py`, función `_comprobar_fecha`) |
 | Aviso *«Hoy no se pudo preparar…»* | Una web no respondía o ha cambiado | Si se repite varios días, quizá la web ha cambiado de formato y hay que ajustar el programa |
+| El libro llega muchas horas tarde | GitHub retrasa sus tareas programadas | Configura el despertador del paso 6 |
+| cron-job.org da error **401** o **403** | La llave ha caducado o le falta el permiso *Actions: Read and write* | Crea otra llave (paso 6.1) y cámbiala en la cabecera `Authorization` |
+| cron-job.org da error **404** | La dirección (URL) está mal escrita | Revisa tu usuario y el nombre del repositorio en la URL |
+| cron-job.org da error **422** | Falta `"programado"` en el workflow o el cuerpo está mal escrito | Copia el *Request body* exactamente como aparece en el paso 6 |
 | Dos libros iguales hoy | Lanzaste el envío a mano después del automático | Borra uno: mantén el dedo sobre él y elige *Quitar del dispositivo* |
 
 En cada ejecución de **Actions**, el **resumen** explica qué partes salieron bien (✅) y cuáles no (❌), y por qué.
