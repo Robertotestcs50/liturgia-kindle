@@ -5,6 +5,7 @@ el recorte, las comprobaciones y la maquetación funcionan.
 """
 
 import datetime as dt
+import re
 import sys
 from pathlib import Path
 
@@ -86,6 +87,34 @@ def test_hora_rechaza_otra_fecha():
         assert "5 de noviembre" in str(e)
     else:
         raise AssertionError("debía rechazar una página de otra fecha")
+
+
+def test_fecha_con_el_formato_nuevo_de_la_web():
+    # Desde el 16-11-2026 la web no escribe la fecha: la lleva en data-fecha,
+    # en los enlaces de día anterior/siguiente y en el día de la celebración.
+    nueva = (PAGINA_HORA
+             .replace("<p>Miércoles 4 de noviembre de 2026, memoria de San Carlos Borromeo, obispo</p>",
+                      '<section class="day-hero"><div class="celebration">Miércoles de la XXXI semana</div></section>'
+                      '<script src="/hoy-pagina.js" data-fecha="2026-11-04"></script>')
+             .replace("<a>‹ Día anterior</a><a>Día siguiente ›</a>",
+                      '<nav class="hoy-dias"><a href="/sexta-hoy/?fecha=2026-11-03">‹ Día anterior</a>'
+                      '<a href="/sexta-hoy/?fecha=2026-11-05">Día siguiente ›</a></nav>'))
+    assert "noviembre" not in nueva
+    fuentes.procesar_hora(nueva, "sexta", D)
+    for otro in (dt.date(2026, 11, 5), dt.date(2026, 11, 11)):  # mañana / mismo día de la semana
+        try:
+            fuentes.procesar_hora(nueva, "sexta", otro)
+        except fuentes.FuenteError:
+            continue
+        raise AssertionError(f"debía rechazar {otro}")
+    sin_fecha = nueva.replace('data-fecha="2026-11-04"', "").replace("Miércoles de la", "De la")
+    sin_fecha = re.sub(r'<nav class="hoy-dias">.*?</nav>', "", sin_fecha)
+    try:
+        fuentes.procesar_hora(sin_fecha, "sexta", D)
+    except fuentes.FuenteError as e:
+        assert "no indica de qué día" in str(e)
+    else:
+        raise AssertionError("sin ninguna fecha no debía darse por buena")
 
 
 def test_hora_rechaza_texto_incompleto():
@@ -171,6 +200,57 @@ def test_libro_completo(tmp_path=Path("/tmp")):
     ruta = epub.construir(D, "San Carlos Borromeo", secs, ["aviso de prueba"], Path(tmp_path) / "t.epub")
     import generar
     generar.comprobar_epub(ruta)
+
+
+def test_decisiones_de_envio():
+    """Cuándo se envía según la hora, si el libro está completo y lo ya enviado."""
+    import os
+    import tempfile
+    import generar
+
+    enviados = []
+    seccion = fuentes.Seccion("sexta", "Sexta", fuentes.procesar_hora(PAGINA_HORA, "sexta", D), "x")
+
+    def probar(hora, completo, estado_previo, evento="schedule"):
+        with tempfile.TemporaryDirectory() as tmp:
+            generar.ESTADO = Path(tmp) / "estado" / "ultimo_envio.txt"
+            if estado_previo:
+                generar.ESTADO.parent.mkdir()
+                generar.ESTADO.write_text(estado_previo + "\n")
+            generar.ahora_en_espana = lambda: dt.datetime(2026, 11, 4, *hora)
+            generar.hoy_en_espana = lambda: D
+
+            def hora_falsa(clave, d):
+                if not completo:
+                    raise fuentes.FuenteError("web caída")
+                return seccion
+            fuentes.hora = hora_falsa
+            fuentes.lecturas = lambda d: (seccion, "San Carlos", "")
+            generar.enviar_a_kindle = lambda ruta, asunto: enviados.append(asunto) or "x@kindle.com"
+            os.environ.update(EVENTO=evento, ORDEN="sexta,lecturas", ENVIAR="true")
+            antes = len(enviados)
+            sys.argv = ["generar.py", "--salida", tmp]
+            codigo = generar.main()
+            estado = generar.ESTADO.read_text().strip() if generar.ESTADO.exists() else ""
+            return len(enviados) - antes, codigo, estado
+
+    hoy = D.isoformat()
+    # (hora, completo, estado previo) -> (envíos, estado final)
+    casos = [
+        ((0, 37), True, "", 1, hoy),                        # completo a las 00:37: se envía
+        ((1, 17), True, hoy, 0, hoy),                       # ya enviado: nada
+        ((0, 37), False, "", 0, ""),                        # incompleto antes de 2:20: espera
+        ((2, 27), False, "", 1, hoy + " parcial"),          # incompleto a las 2:27: se envía
+        ((4, 47), False, hoy + " parcial", 0, hoy + " parcial"),  # no repite el incompleto
+        ((4, 47), True, hoy + " parcial", 1, hoy),          # rescate: llega el completo
+        ((6, 47), True, hoy, 0, hoy),                       # y no se repite
+        ((1, 0), True, "2026-11-03", 1, hoy),               # estado de ayer no cuenta
+    ]
+    for hora, completo, previo, envios_esperados, estado_esperado in casos:
+        envios, _, estado = probar(hora, completo, previo)
+        assert (envios, estado) == (envios_esperados, estado_esperado), (hora, completo, previo, envios, estado)
+    # A mano siempre se envía, aunque ya se hubiera enviado.
+    assert probar((10, 0), True, hoy, evento="workflow_dispatch")[0] == 1
 
 
 if __name__ == "__main__":

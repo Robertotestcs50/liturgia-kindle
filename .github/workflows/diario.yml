@@ -2,13 +2,24 @@ name: Liturgia diaria al Kindle
 
 on:
   schedule:
-    # GitHub usa hora UTC. 03:17 UTC = 04:17 en invierno / 05:17 en verano (España).
-    - cron: "17 3 * * *"
-    # Reintentos por si algo falló o GitHub lo retrasó. Si ya se envió, no
-    # hacen nada (nunca recibirás dos copias). Solo el último intento envía un
-    # libro incompleto, con aviso, si alguna parte sigue sin poder descargarse.
+    # Hora de España (GitHub ajusta solo el cambio de horario de verano).
+    # El libro debe estar en el Kindle antes de las 3:00.
+    #  - 00:37, 01:17, 01:57: solo se envía si el libro está completo.
+    #  - 02:27: si aún falta algo, se envía lo que haya (con aviso).
+    #  - 04:47, 06:47: rescate; si antes solo salió incompleto, envía el completo.
+    # Si ya se envió el libro completo, los demás intentos no hacen nada.
+    - cron: "37 0 * * *"
+      timezone: "Europe/Madrid"
+    - cron: "17 1 * * *"
+      timezone: "Europe/Madrid"
+    - cron: "57 1 * * *"
+      timezone: "Europe/Madrid"
+    - cron: "27 2 * * *"
+      timezone: "Europe/Madrid"
     - cron: "47 4 * * *"
-    - cron: "17 6 * * *"
+      timezone: "Europe/Madrid"
+    - cron: "47 6 * * *"
+      timezone: "Europe/Madrid"
   workflow_dispatch:
     inputs:
       enviar:
@@ -43,7 +54,6 @@ jobs:
         env:
           ENVIAR: ${{ github.event_name == 'schedule' || inputs.enviar }}
           EVENTO: ${{ github.event_name }}
-          ULTIMO_INTENTO: ${{ github.event_name != 'schedule' || github.event.schedule == '17 6 * * *' }}
           ORDEN: ${{ vars.ORDEN }}
           KINDLE_EMAIL: ${{ secrets.KINDLE_EMAIL }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
@@ -78,6 +88,11 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add estado/
-            git commit -m "Enviada la liturgia del $(cat estado/ultimo_envio.txt)"
+            if grep -q parcial estado/ultimo_envio.txt; then
+              git commit -m "Enviada (incompleta) la liturgia del $(cut -d' ' -f1 estado/ultimo_envio.txt)"
+            else
+              git commit -m "Enviada la liturgia del $(cat estado/ultimo_envio.txt)"
+            fi
+            git pull --rebase -q || true
             git push
           fi

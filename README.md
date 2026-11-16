@@ -110,11 +110,13 @@ Crea estos **tres secretos**, uno a uno, con el nombre exactamente así, en may�
 
 ## 🌅 En el día a día
 
-**No tienes que hacer nada.** Cada madrugada, hacia las **4:17** en invierno o las **5:17** en verano (hora de España), el libro se prepara y se envía.
+**No tienes que hacer nada.** Cada noche, a partir de las **00:37** (hora de España, también en verano), el libro se prepara y se envía. Está en tu Kindle **antes de las 3 de la mañana**.
 
-- **Si algo falla, lo vuelve a intentar.** Hay dos reintentos: a las 5:47 y a las 7:17 en invierno (una hora más tarde en verano).
-- **Nunca recibirás dos copias** del envío automático. Si el libro ya salió, los reintentos no hacen nada.
-- **Si en el último intento falta alguna parte**, el libro te llega igualmente con lo que sí se pudo preparar y un aviso en la primera página. Además, GitHub te manda un correo.
+- **Si algo falla, lo vuelve a intentar** a la 1:17, a la 1:57 y a las 2:27.
+- **Hasta las 2:20 solo se envía el libro completo.** Si a las 2:27 aún falta alguna parte, te llega igualmente con lo que sí se pudo preparar y un aviso en la primera página, para que tengas algo con lo que rezar al levantarte. Además, GitHub te manda un correo.
+- **Intentos de rescate a las 4:47 y a las 6:47.** Si solo pudo salir el libro incompleto, en cuanto esté el completo te llega también.
+- **Nunca recibirás dos copias iguales** del envío automático. Si el libro completo ya salió, los demás intentos no hacen nada.
+- **Deja el wifi del Kindle activado.** Cuando lo enciendas, el libro se descarga en unos segundos. Si no aparece, ve a *Configuración → Sincronizar*.
 - **Para reenviar el libro de hoy**, por ejemplo si lo borraste: *Actions → Liturgia diaria al Kindle → Run workflow*.
 - **Para descargar el libro sin el Kindle:** abre cualquier ejecución en *Actions* y bájalo del apartado **Artifacts**. Se guarda 14 días.
 
@@ -148,7 +150,9 @@ Añade dos secretos más: `SMTP_HOST` y `SMTP_PORT`. Por ejemplo, para Outlook: 
 
 ### Cambiar la hora de envío
 
-Está en el archivo `.github/workflows/diario.yml`, en las líneas `cron`. GitHub usa la **hora UTC**, que en España es 1 hora menos en invierno y 2 horas menos en verano. Por ejemplo, `"17 3 * * *"` significa las 03:17 UTC, es decir, las 04:17 en invierno en España.
+Está en el archivo `.github/workflows/diario.yml`, en las líneas `cron`, ya en **hora de España** gracias a `timezone: "Europe/Madrid"`. Por ejemplo, `"37 0 * * *"` significa las 00:37. El primer número son los minutos y el segundo, la hora.
+
+No adelantes el primer intento a antes de medianoche: la web de las lecturas publica el día nuevo a las 00:00.
 
 ---
 
@@ -161,6 +165,7 @@ Está en el archivo `.github/workflows/diario.yml`, en las líneas `cron`. GitHu
 | ❌ *«KINDLE_EMAIL no parece una dirección de Kindle»* | La dirección está mal copiada | Debe terminar en `@kindle.com` |
 | ✅ en GitHub, pero el libro no llega | Amazon no reconoce el remitente o el Kindle no ha sincronizado | Revisa el paso 2 (tu Gmail aprobado en la cuenta del **mismo** Kindle), conecta la wifi y pulsa *Sincronizar*. Mira también si Amazon te ha escrito al Gmail |
 | Aviso *«La página no corresponde al…»* | La web aún mostraba el día anterior | Nada: se reintenta solo más tarde |
+| Aviso *«La página no indica de qué día es»* | La web de las Horas ha cambiado su diseño | Hay que ajustar el programa (`liturgia/fuentes.py`, función `_comprobar_fecha`) |
 | Aviso *«Hoy no se pudo preparar…»* | Una web no respondía o ha cambiado | Si se repite varios días, quizá la web ha cambiado de formato y hay que ajustar el programa |
 | Dos libros iguales hoy | Lanzaste el envío a mano después del automático | Borra uno: mantén el dedo sobre él y elige *Quitar del dispositivo* |
 

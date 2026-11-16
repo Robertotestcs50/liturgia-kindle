@@ -31,11 +31,30 @@ from liturgia.envio import EnvioError, enviar_a_kindle
 
 RAIZ = Path(__file__).resolve().parent
 ESTADO = RAIZ / "estado" / "ultimo_envio.txt"
+# Desde esta hora (España), si falta alguna parte se envía igualmente lo que haya,
+# con aviso, para que el libro esté en el Kindle antes de las 3 de la mañana.
+HORA_LIMITE_PARCIAL = (2, 20)
+
+
+def estado_de_hoy(d: dt.date) -> str:
+    """«completo», «parcial» o «» según lo que ya se haya enviado hoy."""
+    if not ESTADO.exists():
+        return ""
+    texto = ESTADO.read_text().strip()
+    if texto == d.isoformat():
+        return "completo"
+    if texto == f"{d.isoformat()} parcial":
+        return "parcial"
+    return ""
 ORDEN_POR_DEFECTO = "laudes,sexta,visperas,completas,lecturas"
 
 
+def ahora_en_espana() -> dt.datetime:
+    return dt.datetime.now(ZoneInfo("Europe/Madrid"))
+
+
 def hoy_en_espana() -> dt.date:
-    return dt.datetime.now(ZoneInfo("Europe/Madrid")).date()
+    return ahora_en_espana().date()
 
 
 def resumen(texto: str):
@@ -73,7 +92,7 @@ def main() -> int:
     if args.guardar_html:
         fuentes.GUARDAR_EN = args.guardar_html
 
-    if programado and ESTADO.exists() and ESTADO.read_text().strip() == d.isoformat():
+    if programado and estado_de_hoy(d) == "completo":
         resumen(f"El libro del {d.isoformat()} ya se envió hoy. Nada que hacer.")
         return 0
 
@@ -117,10 +136,14 @@ def main() -> int:
     celebracion = celebracion or datos.get("celebracion", "")
     salterio = datos.get("salterio", "")
 
-    ultimo = os.environ.get("ULTIMO_INTENTO", "true").lower() != "false"
-    if avisos and programado and not ultimo:
-        resumen("\nFalta alguna parte: no se envía todavía; se reintentará más tarde.")
-        return 0
+    if avisos and programado:
+        ahora = ahora_en_espana()
+        if (ahora.hour, ahora.minute) < HORA_LIMITE_PARCIAL:
+            resumen("\nFalta alguna parte: no se envía todavía; se reintentará más tarde.")
+            return 0
+        if estado_de_hoy(d) == "parcial":
+            resumen("\nYa se envió hoy un libro incompleto; se seguirá intentando el completo.")
+            return 0
 
     ruta = Path(args.salida) / epub.nombre_archivo(d)
     epub.construir(d, celebracion, secciones, avisos, ruta, salterio=salterio)
@@ -134,9 +157,8 @@ def main() -> int:
             resumen(f"\n❌ Envío fallido: {e}")
             return 1
         resumen(f"📨 Enviado a {destino[:3]}…@{destino.split('@')[-1]}")
-        if not avisos:
-            ESTADO.parent.mkdir(exist_ok=True)
-            ESTADO.write_text(d.isoformat() + "\n")
+        ESTADO.parent.mkdir(exist_ok=True)
+        ESTADO.write_text(d.isoformat() + (" parcial" if avisos else "") + "\n")
 
     # Si faltó alguna parte, la ejecución termina en error para que GitHub te avise por correo.
     return 2 if avisos else 0

@@ -181,14 +181,55 @@ def datos_del_dia(html: str) -> dict:
 
 
 def _comprobar_fecha(soup: BeautifulSoup, d: dt.date):
-    """La página debe ser la del día pedido (si no, podría ser otro día)."""
-    buscado = f"{d.day} de {MESES[d.month - 1]} de {d.year}"
-    marca = soup.select_one(".hoy-h1-fecha")
-    texto = marca.get_text(" ", strip=True) if marca else soup.get_text(" ", strip=True)
-    # \b evita que «15 de noviembre» pase por «5 de noviembre».
-    if not re.search(r"(?<!\d)" + re.escape(normal(buscado)) + r"\b", normal(texto)):
+    """La página debe ser la del día pedido (si no, podría ser la de otro día).
+
+    Se apoya en todas las señales que dé la página, y todas deben cuadrar:
+    * la fecha interna (atributo ``data-fecha``),
+    * los enlaces «Día anterior» / «Día siguiente» (``?fecha=``),
+    * el día de la semana de la celebración («Lunes de la XXXIII semana…»),
+    * la fecha escrita («16 de noviembre de 2026»), si aparece.
+    Si no hay ninguna señal de fecha, tampoco se da por buena.
+    """
+    pruebas: list[str] = []
+    problemas: list[str] = []
+
+    fechas = {el.get("data-fecha", "").strip() for el in soup.select("[data-fecha]")}
+    fechas.discard("")
+    if fechas:
+        pruebas.append("fecha interna")
+        if fechas != {d.isoformat()}:
+            problemas.append(f"fecha interna {', '.join(sorted(fechas))}")
+
+    navegacion = set(re.findall(r"[?&]fecha=(\d{4}-\d{2}-\d{2})",
+                                " ".join(a.get("href", "") for a in soup.select(".hoy-dias a"))))
+    if navegacion:
+        pruebas.append("enlaces de días")
+        esperadas = {(d - dt.timedelta(days=1)).isoformat(), (d + dt.timedelta(days=1)).isoformat()}
+        if navegacion != esperadas:
+            problemas.append(f"enlaces a {', '.join(sorted(navegacion))}")
+
+    cel = soup.select_one(".day-hero .celebration")
+    if cel:
+        m = re.match(r"^(lunes|martes|miercoles|jueves|viernes|sabado|domingo)\b", normal(cel.get_text()))
+        if m:
+            pruebas.append("día de la semana")
+            if m.group(1) != normal(DIAS[d.weekday()]):
+                problemas.append(f"celebración del {m.group(1)}")
+
+    escrito = soup.select_one(".hoy-h1-fecha")
+    texto = escrito.get_text(" ", strip=True) if escrito else soup.get_text(" ", strip=True)
+    if re.search(r"\b\d{1,2} de (" + "|".join(MESES) + r") de \d{4}\b", normal(texto)):
+        pruebas.append("fecha escrita")
+        buscado = normal(f"{d.day} de {MESES[d.month - 1]} de {d.year}")
+        # (?<!\d) evita que «15 de noviembre» pase por «5 de noviembre».
+        if not re.search(r"(?<!\d)" + re.escape(buscado) + r"\b", normal(texto)):
+            problemas.append("fecha escrita distinta")
+
+    if not pruebas:
+        raise FuenteError("La página no indica de qué día es (¿ha cambiado la web?).")
+    if problemas:
         raise FuenteError(
-            f"La página no corresponde al {fecha_larga(d)}; muestra «{texto[:60]}»."
+            f"La página no corresponde al {fecha_larga(d)}: {'; '.join(problemas)}."
         )
 
 
